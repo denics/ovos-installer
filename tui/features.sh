@@ -11,16 +11,15 @@ export FEATURE_PHAL="false"
 export FEATURE_GUI="false"
 export FEATURE_SKILLS="false"
 
-features=("ocp" "$OCP_DESCRIPTION" ON)
-features+=("tts" "$TTS_DESCRIPTION" ON)
-features+=("stt" "$STT_DESCRIPTION" ON)
-features+=("ww" "$WW_DESCRIPTION" ON)
-features+=("phal" "$PHAL_DESCRIPTION" ON)
-features+=("skills" "$SKILL_DESCRIPTION" ON)
+features=("ocp" "$OCP_DESCRIPTION" OFF)
+features+=("tts" "$TTS_DESCRIPTION" OFF)
+features+=("stt" "$STT_DESCRIPTION" OFF)
+features+=("ww" "$WW_DESCRIPTION" OFF)
+features+=("phal" "$PHAL_DESCRIPTION" OFF)
+features+=("skills" "$SKILL_DESCRIPTION" OFF)
 if [[ "$RASPBERRYPI_MODEL" != *"Raspberry Pi 3"* ]] && [[ "$KERNEL" != *"microsoft"* ]] && [ "$PROFILE" != "server" ]; then
   features+=("gui" "$GUI_DESCRIPTION" OFF)
 fi
-
 
 OVOS_FEATURES=$(whiptail --separate-output --title "$TITLE" \
   --checklist "$CONTENT" --cancel-button "$BACK_BUTTON" --ok-button "$OK_BUTTON" --yes-button "$OK_BUTTON" "$TUI_WINDOW_HEIGHT" "$TUI_WINDOW_WIDTH" "${#features[@]}" "${features[@]}" 3>&1 1>&2 2>&3)
