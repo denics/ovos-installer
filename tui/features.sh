@@ -3,6 +3,11 @@
 # shellcheck source=locales/en-us/features.sh
 source "tui/locales/$LOCALE/features.sh"
 
+export FEATURE_OCP="false"
+export FEATURE_TTS="false"
+export FEATURE_STT="false"
+export FEATURE_WW="false"
+export FEATURE_PHAL="false"
 export FEATURE_GUI="false"
 export FEATURE_SKILLS="false"
 
@@ -32,6 +37,21 @@ for FEATURE in $OVOS_FEATURES; do
     ;;
   "skills")
     export FEATURE_SKILLS="true"
+    ;;
+  "ocp")
+    export FEATURE_OCP="true"
+    ;;
+  "tts")
+    export FEATURE_TTS="true"
+    ;;
+  "stt")
+    export FEATURE_STT="true"
+    ;;
+  "phal")
+    export FEATURE_PHAL="true"
+    ;;
+  "ww")
+    export FEATURE_WW="true"
     ;;
   esac
 done
