@@ -462,3 +462,21 @@ function detect_devkit_device() {
     # to tas5806.
     DETECTED_DEVICES+=("tas5806")
 }
+
+# Function to extract version information from a Python file at a given URL
+function extract_version() {
+    # The first argument to the function is the URL of the Python file
+    local url=$1
+
+    # Fetch the file content using curl
+    local file_content=$(curl -s $url)
+
+    # Extract version information using grep and cut
+    local version_major=$(echo "$file_content" | grep 'VERSION_MAJOR' | cut -d '=' -f2 | tr -d '[:space:]')
+    local version_minor=$(echo "$file_content" | grep 'VERSION_MINOR' | cut -d '=' -f2 | tr -d '[:space:]')
+    local version_build=$(echo "$file_content" | grep 'VERSION_BUILD' | cut -d '=' -f2 | tr -d '[:space:]')
+    local version_alpha=$(echo "$file_content" | grep 'VERSION_ALPHA' | cut -d '=' -f2 | tr -d '[:space:]')
+
+    # Print the version
+    echo "Version: $version_major.$version_minor.$version_build Alpha: $version_alpha"
+}
