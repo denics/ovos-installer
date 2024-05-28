@@ -1,6 +1,6 @@
 #!/bin/env bash
 
-source "../../../utils.sh"
+source "../../../utils/common.sh"
 
 CONTENT="
 You decided to install OCP
