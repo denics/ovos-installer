@@ -58,7 +58,7 @@
       "ovos-PHAL-plugin-system": {
         "enabled": true
       }
-   }{% if 'tas5806' in ovos_installer_i2c_devices %},
+    }{% if 'tas5806' in ovos_installer_i2c_devices %},
     "ovos-PHAL-plugin-hotkeys": {
       "key_down": {
         "mycroft.mic.listen": 582,
@@ -69,8 +69,11 @@
       "key_up": {
         "mycroft.mic.unmute": 248
       }
+    }{% elif 'attiny1614' in ovos_installer_i2c_devices %},
+    "ovos-PHAL-plugin-sj201-leds": {
+      "enabled": true
     }
-{% endif %}
+    {% endif %}
   }{% if ovos_installer_usage_telemetry| bool %},
   "open_data": {
     "intent_urls": [
