@@ -1,5 +1,5 @@
 #!/bin/env bash
-set -euo pipefail
+set -eo pipefail
 
 echo -e "\e[1;31m
                                      ++.  .::::.  .++.

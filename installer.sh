@@ -1,4 +1,10 @@
-#!/bin/env sh
+#!/usr/bin/env bash 
+
+# Detect the platform
+OS="$(uname -s)"
+
+# Directory that contains this very file
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Set global variables based on sudo usage
 if [ -n "$SUDO_USER" ]; then
@@ -27,7 +33,12 @@ sudo -u "$RUN_AS" git clone --quiet https://github.com/OpenVoiceOS/ovos-installe
 cd "$installer_path" || exit 1
 
 # Execute the installer entrypoint
-bash setup.sh "$@"
+
+if [[ "$OS" == "Darwin" ]]; then
+  bash "${SCRIPT_DIR}/setup_osx.sh" "$@"
+else
+  bash "${SCRIPT_DIR}/setup.sh" "$@"
+fi
 
 # Delete ovos-installer directory once the installer is successfull
 exit_status="$?"

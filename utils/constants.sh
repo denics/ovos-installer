@@ -1,5 +1,8 @@
 #!/bin/env bash
-set -euo pipefail
+set -eo pipefail
+
+# Detect the platform
+OS="$(uname -s)"
 
 export ANSIBLE_LOG_FILE=/var/log/ovos-ansible.log
 export ATMEGA328P_SIGNATURE=":030000001E950F3B"
@@ -56,11 +59,19 @@ declare -ra SCENARIO_ALLOWED_OPTIONS=(features channel share_telemetry share_usa
 export SCENARIO_ALLOWED_OPTIONS
 export SCENARIO_NAME="scenario.yaml"
 export SCENARIO_PATH=""
-declare -rA SUPPORTED_DEVICES=(
+if [[ "$OS" == "Darwin" ]]; then
+  typeset -a SUPPORTED_DEVICES=(
     ["atmega328p"]="1a" #https://www.microchip.com/en-us/product/atmega328p
     ["attiny1614"]="04" #https://www.microchip.com/en-us/product/attiny1614
     ["tas5806"]="2f"    #https://www.ti.com/product/TAS5806MD
-)
+  )
+else
+  declare -A SUPPORTED_DEVICES=(
+    ["atmega328p"]="1a" #https://www.microchip.com/en-us/product/atmega328p
+    ["attiny1614"]="04" #https://www.microchip.com/en-us/product/attiny1614
+    ["tas5806"]="2f"    #https://www.ti.com/product/TAS5806MD
+  )
+fi
 export SUPPORTED_DEVICES
 export TEMP_CHANNEL_FILE=/tmp/channel.json
 export TEMP_FEATURES_FILE=/tmp/features.json
