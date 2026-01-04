@@ -1,0 +1,25 @@
+---
+- name: Install kernel headers
+  ansible.builtin.apt:
+    name: raspberrypi-kernel-headers
+    install_recommends: false
+    update_cache: true
+
+- name: Set EEPROM release
+  ansible.builtin.lineinfile:
+    path: /etc/default/rpi-eeprom-update
+    regexp: "^FIRMWARE_RELEASE_STATUS="
+    line: 'FIRMWARE_RELEASE_STATUS="{{ ovos_hardware_mark2_eeprom_release }}"'
+
+- name: Update EEPROM
+  ansible.builtin.command:
+    cmd: rpi-eeprom-update -a
+  register: _eeprom_status
+  changed_when: false
+
+- name: Set ovos_installer_reboot fact (EEPROM)
+  vars:
+    _eeprom_reboot: "{{ _eeprom_status.stdout | regex_search('reboot') }}"
+  ansible.builtin.set_fact:
+    ovos_installer_reboot: true
+  when: _eeprom_status is defined and _eeprom_reboot | length > 0

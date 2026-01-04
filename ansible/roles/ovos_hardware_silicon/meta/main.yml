@@ -1,0 +1,24 @@
+---
+galaxy_info:
+  author: Denis Pitzalis (@denics)
+  description: Open Voice OS installer Apple Silicon
+  company: OpenVoiceOS
+  standalone: true
+
+  issue_tracker_url: https://github.com/openvoiceos/ovos-installer/issues
+
+  license: Apache-2.0
+
+  min_ansible_version: "2.12"
+
+  platforms:
+    - name: MacOSX
+
+  galaxy_tags:
+    - openvoiceos
+    - ovos
+    - hivemind
+    - voiceassistant
+    - MacOSX
+
+dependencies: []

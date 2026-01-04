@@ -20,6 +20,16 @@
       tags:
         - always
 
+    - name: "Show the OS distribution major version"
+      ansible.builtin.debug:
+        msg: '{{ item | to_nice_yaml(indent=2) }}'
+      vars:
+        item:
+          - ansible_distribution_major_version: '{{ ansible_distribution_major_version }}'
+          - ansible_distribution: '{{ ansible_distribution }}'
+          - ansible_architecture: '{{ ansible_architecture }}'
+          - '{{ ansible_facts }}'
+
   roles:
     - role: ovos_hardware_mark1
       when:
@@ -36,7 +46,14 @@
         - "'tas5806' in ovos_installer_i2c_devices"
         - ansible_architecture == "aarch64"
 
-    - role: ovos_installer
+    - role: ovos_hardware_silicon
+      when:
+        - ansible_facts["distribution"] == "MacOSX"
+        - ansible_facts["architecture"] == "arm64"
+        - ansible_facts["os_family"] == "Darwin"
+        - ansible_facts["distribution_major_version"] is version('15', '>=')
+
+#    - role: ovos_installer
 
   tasks:
     - name: Checking for reboot requirement

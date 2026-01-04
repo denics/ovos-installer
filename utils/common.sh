@@ -1,5 +1,5 @@
 #!/bin/env bash
-set -euo pipefail
+set -eo pipefail
 #
 # Functions in this file are mostly called by setup.sh but most of
 # the exported variables are consumed within the Ansible playbook.
@@ -50,8 +50,19 @@ function on_error() {
 # Delete installer log file if existing from previous run.
 # This file will be deleted at each execution of the installer.
 function delete_log() {
-    if [ -f "$LOG_FILE" ]; then
-        rm -f "$LOG_FILE"
+    # Remove the log file if it exists – “rm -f” is safe for missing
+    rm -f -- "$LOG_FILE"
+    
+    # Ensure the directory exists (creates it if needed, no error if
+    # it already exists).  Use “-p” to avoid an exit status on
+    # “exists” and preserve any existing contents.
+    mkdir -p -- "$LOG_PATH"
+
+    # Fix ownership: if the script ran as root
+    # and LOG_PATH is under the target user’s home, make the user
+    # the owner so later log writes don’t require sudo.
+    if [[ $EUID -eq 0 && -d "$LOG_PATH" ]]; then
+      chown -R "$RUN_AS:$(id -ng "$RUN_AS")" "$LOG_PATH"
     fi
 }
 
@@ -59,6 +70,17 @@ function delete_log() {
 # Installer must be executed with super privileges but either
 # "root" or "sudo" can run this script, we need to know whom.
 function detect_user() {
+    # In Darwin (macOS), prefer user permissions over sudo/root
+    if [ "$(uname -s)" = "Darwin" ]; then
+        export RUN_AS="$USER"
+        export SUDO_USER=""
+        RUN_AS_HOME=$(eval echo ~"${RUN_AS}")
+        export RUN_AS_HOME
+        export VENV_PATH="${RUN_AS_HOME}/.ovos/.venv"
+        export RUN_AS_UID="$(id -u "${USER}")"
+        return 0
+    fi
+
     if [ "${USER_ID:-$(id -u)}" -ne 0 ]; then
         echo -e "[$fail_format] This script must be run as root (not recommended) or with sudo"
         exit "${EXIT_PERMISSION_DENIED}"
@@ -92,7 +114,7 @@ function detect_user() {
     fi
     RUN_AS_HOME=$(eval echo ~"${RUN_AS}")
     export RUN_AS_HOME
-    export VENV_PATH="${RUN_AS_HOME}/.venvs/${INSTALLER_VENV_NAME}"
+    export VENV_PATH="${RUN_AS_HOME}/.ovos/.venv"
 }
 
 # Detect which sound server is running (if running), PulseAudio or PipeWire.
@@ -114,7 +136,11 @@ function detect_sound() {
     printf '%s' "➤ Detecting sound server... "
     local pulse_processes
     pulse_processes="$( (pgrep -a -f "pulse" 2>>"$LOG_FILE" || true) | awk -F"/" '{ print $NF }' )"
-    if [[ "$pulse_processes" =~ "pulse" ]]; then
+
+    if [[ "$(uname)" == "Darwin" ]]; then
+         # macOS approach
+        export SOUND_SERVER="coreaudio"
+    elif [[ "$pulse_processes" =~ "pulse" ]]; then
         # PULSE_SERVER is required by pactl as it is executed via sudo
         # Detect if a PulseAudio socket exists either Linux or WSL2
         if [ -S "/run/user/${RUN_AS_UID}/pulse/native" ] && [ ! -S "$PULSE_SOCKET_WSL2" ]; then
@@ -146,43 +172,133 @@ function detect_sound() {
     else
         export SOUND_SERVER="N/A"
     fi
-    echo -e "[$done_format]"
+    echo -e "$SOUND_SERVER [$done_format]"
 }
 
-# Check for specific CPU instruction set in order to leverage TensorFlow
-# and/or ONNXruntime. The exported variable will be used within the
-# Ansible playbook to disable certain wake words and VAD plugin requiring
-# these features if AVX2 or SIMD are not detected.
-function detect_cpu_instructions() {
-    printf '%s' "➤ Detecting AVX2/SIMD support... "
-    if grep -q -i -E "avx2|simd" /proc/cpuinfo; then
-        export CPU_IS_CAPABLE="true"
-    else
-        export CPU_IS_CAPABLE="false"
-    fi
-    echo -e "[$done_format]"
+# ─────────────────────────────────────────────────────────────────────────────
+# Detect SIMD/AVX2 support
+# ─────────────────────────────────────────────────────────────────────────────
+detect_cpu_instructions() {
+  printf '%s' "➤ Detecting SIMD / AVX2 support... "
+
+  local arch smd
+  arch="$(uname -m)"
+
+  case "$arch" in
+    x86_64)
+      smd=$(grep -iE 'avx2|sse4_2' /proc/cpuinfo 2>/dev/null) || true
+      ;;
+    aarch64)
+      smd=$(grep -iE 'neon|asimd' /proc/cpuinfo 2>/dev/null) || true
+      ;;
+    *)        # Unknown/unsupported architecture
+      smd=""
+      ;;
+  esac
+
+  # macOS overrides the Linux–style check (if available)
+  if [[ "$(uname)" == "Darwin" ]]; then
+    case "$arch" in
+      x86_64)
+        smd=$(sysctl -n machdep.cpu.features 2>/dev/null | grep -iq 'AVX2' && echo yes || echo no)
+        ;;
+      arm64)
+        smd=$(sysctl -n machdep.cpu.brand_string 2>/dev/null | grep -iq 'Apple M' && echo yes || echo no)
+        ;;
+    esac
+  fi
+
+  if [[ "$smd" =~ ^(yes|YES|^$|^$) ]]; then
+    export CPU_IS_CAPABLE=true
+  else
+    export CPU_IS_CAPABLE=false
+  fi
+
+  echo -e "$CPU_IS_CAPABLE [$done_format]"
 }
 
-# Look for existing or partial instance of Open Voice OS.
-# First Docker and Podman will be checked for ovos-* and/or hivemind-*
-# containers, if nothing was found then the function will check for
-# the Python virtual environment.
-function detect_existing_instance() {
-    printf '%s' "➤ Checking for existing instance... "
-    if [ -n "$(docker ps -a --filter="name=ovos_core|ovos_messagebus|hivemind*" -q 2>>"$LOG_FILE")" ]; then
-        export EXISTING_INSTANCE="true"
-        export INSTANCE_TYPE="containers"
-    elif [ -n "$(podman ps -a --filter="name=ovos_core|ovos_messagebus|hivemind*" -q 2>>"$LOG_FILE")" ]; then
-        export EXISTING_INSTANCE="true"
-        export INSTANCE_TYPE="containers"
-    elif [ -d "${RUN_AS_HOME}/.venvs/ovos" ]; then
-        export EXISTING_INSTANCE="true"
-        export INSTANCE_TYPE="virtualenv"
-    else
-        export EXISTING_INSTANCE="false"
+# ────────────────────────────────────────────────────────────────────────
+# Detect existing Open Voice OS instance
+# ────────────────────────────────────────────────────────────────────────
+detect_existing_instance() {
+  printf '%s' "➤ Checking for existing instance… "
+
+  export EXISTING_INSTANCE=false
+  export INSTANCE_TYPE=""
+
+  # ---------- Docker ----------
+  if command -v docker >/dev/null 2>&1; then
+    # Is the Docker daemon alive?
+    if ! docker info >/dev/null 2>&1; then
+      printf "\nDocker is installed but not running.\n"
+      # Non‑interactive mode → just skip
+      if [ -t 0 ]; then
+        printf "➤ Non‑interactive: ignoring Docker.\n"
+      else
+        read -rp "Start Docker now? (y/N) " yn || yn="N"
+        case "$yn" in
+          [Yy]*)
+            if command -v systemctl >/dev/null 2>&1; then
+              printf "➤ Starting systemd Docker… "
+              sudo systemctl start docker
+            else
+              printf "➤ Cannot auto‑start Docker: try starting it manually.\n"
+            fi
+            ;;
+          *)  printf "➤ Skipping Docker.\n";;
+        esac
+      fi
     fi
-    echo -e "[$done_format]"
+
+    if docker ps -a --filter="name=ovos_core|ovos_messagebus|hivemind*" -q 2>/dev/null | grep -q .; then
+      export EXISTING_INSTANCE=true
+      export INSTANCE_TYPE="containers"
+      printf "[$done_format]\n"
+      return
+    fi
+  fi
+
+  # ---------- Podman ----------
+  if command -v podman >/dev/null 2>&1; then
+    # Is Podman running? (podman itself can talk to a remote podman‑socket)
+    if ! podman info >/dev/null 2>&1; then
+      printf "\nPodman is installed but not running.\n"
+      if [ -t 0 ]; then
+        printf "➤ Non‑interactive: ignoring Podman.\n"
+      else
+        read -rp "Start Podman now? (y/N) " yn || yn="N"
+        case "$yn" in
+          [Yy]*)
+            if command -v systemctl >/dev/null 2>&1; then
+              printf "➤ Starting systemd Podman… "
+              sudo systemctl start podman
+            else
+              printf "➤ Cannot auto‑start Podman: try starting it manually.\n"
+            fi
+            ;;
+          *)  printf "➤ Skipping Podman.\n";;
+        esac
+      fi
+    fi
+
+    if podman ps -a --filter="name=ovos_core|ovos_messagebus|hivemind*" -q 2>/dev/null | grep -q .; then
+      export EXISTING_INSTANCE=true
+      export INSTANCE_TYPE="containers"
+      printf "[$done_format]\n"
+      return
+    fi
+  fi
+
+  # ---------- Virtual‑env ----------
+  if [[ -d "${RUN_AS_HOME}/.ovos/.venv/" ]]; then
+    export EXISTING_INSTANCE=true
+    export INSTANCE_TYPE="virtualenv"
+  fi
+
+  printf "[$done_format]\n"
 }
+
+
 
 # Check is a display server is running such as X or Wayland
 # This function only works with systemd as it leveraged loginctl
@@ -190,17 +306,22 @@ function detect_existing_instance() {
 function detect_display() {
     printf '%s' "➤ Detecting display server... "
     export DISPLAY_SERVER="N/A"
-    local sessions
-    sessions="$(loginctl | grep "$RUN_AS" | awk '{ print $1 }')"
-    for session in $sessions; do
-        session_type="$(loginctl show-session "$session" -p Type --value)"
-        if [ "$session_type" == "wayland" ]; then
-            export DISPLAY_SERVER="wayland"
-        elif [ "$session_type" == "x11" ]; then
-            export DISPLAY_SERVER="x11"
-        fi
-    done
-    echo -e "[$done_format]"
+     if [[ "$(uname)" == "Darwin" ]]; then
+         # macOS approach
+        export DISPLAY_SERVER="macos"
+    else
+        local sessions
+        sessions="$(loginctl | grep "$RUN_AS" | awk '{ print $1 }')"
+        for session in $sessions; do
+            session_type="$(loginctl show-session "$session" -p Type --value)"
+            if [ "$session_type" == "wayland" ]; then
+                export DISPLAY_SERVER="wayland"
+            elif [ "$session_type" == "x11" ]; then
+                export DISPLAY_SERVER="x11"
+            fi
+        done
+    fi
+    echo -e "$DISPLAY_SERVER [$done_format]"
 }
 
 # Parse /sys/firmware/devicetree/base/model file if it exists and check
@@ -224,33 +345,51 @@ function is_raspeberrypi_soc() {
     echo -e "[$done_format]"
 }
 
-# Retrieve operating system information based on standard /etc/os-release
-# and Python command. This is used to display information to the user
-# about the platform where the installer is running on and where OVOS is
-# going to be installed.
-function get_os_information() {
-    printf '%s' "➤ Retrieving OS information... "
-    if [ -f "$OS_RELEASE" ]; then
-        ARCH="$(uname -m 2>>"$LOG_FILE")"
-        KERNEL="$(uname -r 2>>"$LOG_FILE")"
-        PYTHON="$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[0:2])))' 2>>"$LOG_FILE")"
-
-        # shellcheck source=/etc/os-release
-        source "$OS_RELEASE"
-
-        export DISTRO_NAME="${ID:-unknown}"
-        export DISTRO_VERSION_ID="${VERSION_ID:-}"
-        export DISTRO_VERSION="${VERSION:-}"
-        export ARCH KERNEL PYTHON
-
-        # For debug purpose only
-        echo ["$ARCH", "$KERNEL", "$PYTHON", "$DISTRO_NAME", "$DISTRO_VERSION_ID"] >>"$LOG_FILE"
-    else
-        # Mostly if the detected system is no a Linux OS
-        uname 2>>"$LOG_FILE"
-    fi
-    echo -e "[$done_format]"
+# Return the major.minor Python 3 version, e.g. "3.11"
+function get_python_version() {
+  python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
 }
+
+# ────────────────────────────────────────────────────────────────────────
+# Detect system details and export useful variables
+# ────────────────────────────────────────────────────────────────────────
+get_os_information() {
+  printf '%s' "➤ Retrieving OS information... "
+
+  if [ -f "$OS_RELEASE" ]; then
+    ARCH="$(uname -m 2>>"$LOG_FILE")"
+    KERNEL="$(uname -r 2>>"$LOG_FILE")"
+    PYTHON="$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))' 2>>"$LOG_FILE")"
+
+    # shellcheck source=/etc/os-release
+    #   (you already set $OS_RELEASE earlier)
+    . "$OS_RELEASE"
+
+    export DISTRO_NAME="${ID:-unknown}"
+    export DISTRO_VERSION_ID="${VERSION_ID:-}"
+    export DISTRO_VERSION="${VERSION:-}"
+    export ARCH KERNEL PYTHON
+
+    echo "[$ARCH,$KERNEL,$PYTHON,$DISTRO_NAME,$DISTRO_VERSION_ID]" >>"$LOG_FILE"
+  elif [ "$(uname)" = "Darwin" ]; then
+    ARCH="$(uname -m 2>>"$LOG_FILE")"
+    KERNEL="$(uname -r 2>>"$LOG_FILE")"
+    PYTHON="$(get_python_version 2>>"$LOG_FILE")"
+
+    export DISTRO_NAME="Darwin"
+    export DISTRO_VERSION_ID="$(sw_vers -BuildVersion)"
+    export DISTRO_VERSION="$(sw_vers -productVersion)"
+    export ARCH KERNEL PYTHON
+
+    echo "[$ARCH,$KERNEL,$PYTHON,$DISTRO_NAME,$DISTRO_VERSION_ID]" >>"$LOG_FILE"
+  else
+    printf '\\n\\e[31m[error]\\e[0m Unsupported OS – aborting.\\n'
+    exit 1
+  fi
+
+  printf " [$done_format]\\n"
+}
+
 
 # Install packages for Debian-based distributions
 function install_debian_packages() {
@@ -280,6 +419,12 @@ function install_opensuse_packages() {
 function install_arch_packages() {
     local extra_packages=("$@")
     pacman -Sy --noconfirm python python-pip python-virtualenv libnewt expect jq "${extra_packages[@]}" &>>"$LOG_FILE"
+}
+
+# Install packages for Arch-based distributions
+function install_macos_packages() {
+    local extra_packages=("$@")
+    sudo -u $RUN_AS brew install newt expect jq yq "${extra_packages[@]}" &>>"$LOG_FILE"
 }
 
 # Install packages required by the installer based on retrieved information
@@ -327,6 +472,9 @@ function required_packages() {
     arch | manjaro | endeavouros)
         install_arch_packages "${extra_packages[@]}"
         ;;
+    Darwin)
+        install_macos_packages "${extra_packages[@]}"
+        ;;
     *)
         echo -e "[$fail_format]"
         echo "Operating system not supported." | tee -a "${LOG_FILE}"
@@ -359,7 +507,7 @@ function create_python_venv() {
     if [ -d "$VENV_PATH" ]; then
         if [ "$REUSE_CACHED_ARTIFACTS" != "true" ]; then
             # Make sure everything is clean before starting.
-            rm -rf "$VENV_PATH" /root/.ansible &>>"$LOG_FILE"
+            rm -rf -- "$RUN_AS_HOME/.ansible" &>>"$LOG_FILE"
         fi
     fi
 
@@ -378,7 +526,7 @@ function create_python_venv() {
     fi
 
     $PIP_COMMAND install --no-cache-dir --upgrade pip setuptools &>>"$LOG_FILE"
-    chown "$RUN_AS":"$(id -ng "$RUN_AS" 2>>"$LOG_FILE" || echo "$RUN_AS")" "$VENV_PATH" "${RUN_AS_HOME}/.venvs" &>>"$LOG_FILE"
+    chown "$RUN_AS":"$(id -ng "$RUN_AS" 2>>"$LOG_FILE" || echo "$RUN_AS")" "$VENV_PATH" "${RUN_AS_HOME}/.ovos/.venv/" &>>"$LOG_FILE"
     unset -f ansible-galaxy pip3
     echo -e "[$done_format]"
 }

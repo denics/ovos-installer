@@ -1,0 +1,20 @@
+---
+- name: Run only on macOS
+  when: ansible_facts['os_family'] == 'Darwin'
+  block:
+    - name: Get machine architecture (fallback to fact if available)
+      ansible.builtin.command: uname -m
+      register: architecture_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: Set architecture‑specific variables
+      set_fact:
+        is_apple_silicon: "{{ architecture == 'arm64' }}"
+        homebrew_path: "{{ '/opt/homebrew' if architecture == 'arm64' else '/usr/local' }}"
+        ovos_messagebus_arch: "{{ 'aarch64' if architecture == 'arm64' else 'x86_64' }}"
+    
+    - name: Set Homebrew Python path
+      set_fact:
+        homebrew_python_path: "{{ homebrew_path }}/opt/python@{{ python_version }}/bin/python{{ python_version }}"
+    
